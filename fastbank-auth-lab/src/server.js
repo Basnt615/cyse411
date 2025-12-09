@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
+const csurf = require("csurf");
 const crypto = require("crypto");
 // bcrypt is installed but NOT used in the vulnerable baseline:
 const bcrypt = require("bcrypt");
@@ -11,8 +12,12 @@ const PORT = 3001;
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(cookieParser());
+const csrfProtection = csurf({ cookie: true });
 app.use(express.static("public"));
 
+app.get("/api/csrf-token", csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
 /**
  * VULNERABLE FAKE USER DB
  * For simplicity, we start with a single user whose password is "password123".
@@ -58,7 +63,7 @@ app.get("/api/me", (req, res) => {
  * - Session token is simple and predictable
  * - Cookie lacks security flags
  */
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", csrfProtection, async (req, res) => {
   const { username, password } = req.body;
   const user = findUser(username);
 
@@ -99,7 +104,7 @@ app.post("/api/login", async (req, res) => {
 /**
  * LOGOUT
  */
-app.post("/api/logout", (req, res) => {
+app.post("/api/logout", csrfProtection, (req, res) => {
   const token = req.cookies.session;
   if (token && sessions[token]) {
     delete sessions[token];
