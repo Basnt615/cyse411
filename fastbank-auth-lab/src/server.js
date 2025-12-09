@@ -23,7 +23,7 @@ const users = [
     id: 1,
     username: "student",
     // VULNERABLE: fast hash without salt
-    passwordHash: fastHash("password123") // students must replace this scheme with bcrypt
+    passwordHash: bcrypt.hashSync("password123", 12) // students must replace this scheme with bcrypt
   }
 ];
 
@@ -34,9 +34,6 @@ const sessions = {}; // token -> { userId }
  * VULNERABLE FAST HASH FUNCTION
  * Students MUST STOP using this and replace logic with bcrypt.
  */
-function fastHash(password) {
-  return crypto.createHash("sha256").update(password).digest("hex");
-}
 
 // Helper: find user by username
 function findUser(username) {
@@ -61,45 +58,54 @@ app.get("/api/me", (req, res) => {
  * - Session token is simple and predictable
  * - Cookie lacks security flags
  */
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const user = findUser(username);
 
+  // was vulnrable 
   if (!user) {
-    // VULNERABLE: username enumeration via message
-    return res
-      .status(401)
-      .json({ success: false, message: "Unknown username" });
+  return res.status(401).json({ success: false, message: "Invalid credentials" });
+}
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  
+  if (!valid) {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
   }
 
-  const candidateHash = fastHash(password);
-  if (candidateHash !== user.passwordHash) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Wrong password" });
-  }
+  // Strong random token
+  const token = crypto.randomBytes(32).toString("hex");
 
-  // VULNERABLE: predictable token
-  const token = username + "-" + Date.now();
-
-  // VULNERABLE: session stored without expiration
+  // Store session
   sessions[token] = { userId: user.id };
 
-  // VULNERABLE: cookie without httpOnly, secure, sameSite
+  // Secure cookie
   res.cookie("session", token, {
-    // students must add: httpOnly: true, secure: true, sameSite: "lax"
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax"
   });
 
-  // Client-side JS (login.html) will store this token in localStorage (vulnerable)
-  res.json({ success: true, token });
+  // CSRF token (double submit)
+  const csrfToken = crypto.randomBytes(24).toString("hex");
+  res.cookie("csrfToken", csrfToken, {
+    httpOnly: false,
+    secure: true,
+    sameSite: "lax"
+  });
+
+  res.json({ success: true });
 });
 
+/**
+ * LOGOUT
+ */
 app.post("/api/logout", (req, res) => {
   const token = req.cookies.session;
   if (token && sessions[token]) {
     delete sessions[token];
   }
   res.clearCookie("session");
+  res.clearCookie("csrfToken");
   res.json({ success: true });
 });
 
