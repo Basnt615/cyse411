@@ -4,30 +4,36 @@ const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const crypto = require("crypto");
-const rateLimit = require("express-rate-limit");  // for rate limiting
-const csurf = require("csurf");                   // for CSRF protection
-const sanitizer = require("some-html-sanitizer"); // for XSS input 
+const rateLimit = require("express-rate-limit");
+const csurf = require("csurf");
+const sanitizer = require("some-html-sanitizer");
 const app = express();
 
+// --- RATE LIMITER ---
 const sensitiveLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,                   // max 5 requests per IP per window
-  message: 'Too many requests. Please try again later.'
+  max: 5,
+  message: "Too many requests. Please try again later.",
 });
 
-// --- BASIC CORS (clean, not vulnerable) ---
+// --- CORS ---
 app.use(
   cors({
-   origin: ["http://localhost:3001", "http://127.0.0.1:3001"],
-    credentials: true
+    origin: ["http://localhost:3001", "http://127.0.0.1:3001"],
+    credentials: true,
   })
 );
 
 app.use(bodyParser.json());
 app.use(cookieParser());
-const csrfProtection = csurf({ cookie: true })
-// --- IN-MEMORY SQLITE DB (clean) ---
+const csrfProtection = csurf({ cookie: true });
+
+// --- SQLITE IN-MEMORY DB ---
 const db = new sqlite3.Database(":memory:");
+
+function fastHash(pwd) {
+  return crypto.createHash("sha256").update(pwd).digest("hex");
+}
 
 db.serialize(() => {
   db.run(`
@@ -36,7 +42,7 @@ db.serialize(() => {
       username TEXT UNIQUE,
       password_hash TEXT,
       email TEXT
-    );
+    )
   `);
 
   db.run(`
@@ -45,7 +51,7 @@ db.serialize(() => {
       user_id INTEGER,
       amount REAL,
       description TEXT
-    );
+    )
   `);
 
   db.run(`
@@ -53,7 +59,7 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user TEXT,
       comment TEXT
-    );
+    )
   `);
 
   const passwordHash = fastHash("password123");
@@ -63,16 +69,18 @@ db.serialize(() => {
     ["alice", passwordHash, "alice@example.com"]
   );
 
-  db.run(`INSERT INTO transactions (user_id, amount, description) VALUES (1, 25.50, 'Coffee shop')`);
-  db.run(`INSERT INTO transactions (user_id, amount, description) VALUES (1, 100, 'Groceries')`);
+  db.run(
+    "INSERT INTO transactions (user_id, amount, description) VALUES (?, ?, ?)",
+    [1, 25.5, "Coffee shop"]
+  );
+  db.run(
+    "INSERT INTO transactions (user_id, amount, description) VALUES (?, ?, ?)",
+    [1, 100, "Groceries"]
+  );
 });
 
-// --- SESSION STORE (simple, predictable token exactly like assignment) ---
+// --- SESSION STORE ---
 const sessions = {};
-
-function fastHash(pwd) {
-  return crypto.createHash("sha256").update(pwd).digest("hex");
-}
 
 function auth(req, res, next) {
   const sid = req.cookies.sid;
@@ -81,80 +89,61 @@ function auth(req, res, next) {
   next();
 }
 
-// ------------------------------------------------------------
-// Q4 — AUTH ISSUE 1 & 2: SHA256 fast hash + SQLi in username.
-// Q4 — AUTH ISSUE 3: Username enumeration.
-// Q4 — AUTH ISSUE 4: Predictable sessionId.
-// ------------------------------------------------------------
+// --- LOGIN ---
 app.post("/login", sensitiveLimiter, csrfProtection, (req, res) => {
   const { username, password } = req.body;
 
-  const sql = `SELECT id, username, password_hash FROM users WHERE username = ?`;
-
-  db.get(sql, [username], (err, user) => {
+  db.get("SELECT id, username, password_hash FROM users WHERE username = ?", [username], (err, user) => {
     if (!user) return res.status(404).json({ error: "Unknown username" });
 
     const candidate = fastHash(password);
-    if (candidate !== user.password_hash) {
-      return res.status(401).json({ error: "Wrong password" });
-    }
+    if (candidate !== user.password_hash) return res.status(401).json({ error: "Wrong password" });
 
-    const sid = crypto.randomBytes(32).toString("hex"); // secure random
+    const sid = crypto.randomBytes(32).toString("hex");
     sessions[sid] = { userId: user.id };
 
-    // Cookie is intentionally “normal” (not HttpOnly / secure)
-    res.cookie("sid", sid, {});
-
+    res.cookie("sid", sid, {}); // normal cookie (not HttpOnly)
     res.json({ success: true });
   });
 });
 
-// ------------------------------------------------------------
-// /me — clean route, no vulnerabilities
-// ------------------------------------------------------------
+// --- GET CURRENT USER ---
 app.get("/me", auth, sensitiveLimiter, (req, res) => {
-  db.get(
-  "SELECT username, email FROM users WHERE id = ?",
-  [req.user.id],
-  (err, row) => res.json(row)
-  );
+  db.get("SELECT username, email FROM users WHERE id = ?", [req.user.id], (err, row) => {
+    if (err) return res.status(500).json({ error: "Database error" });
+    res.json(row);
+  });
 });
 
-// ------------------------------------------------------------
-// Q1 — SQLi in transaction search
-// ------------------------------------------------------------
+// --- TRANSACTIONS ---
 app.get("/transactions", auth, sensitiveLimiter, (req, res) => {
   const q = req.query.q || "";
-  const sql = `
-  SELECT id, amount, description
-  FROM transactions
-  WHERE user_id = ?
-    AND description LIKE ?
-  ORDER BY id DESC
-`;
 
-db.all(sql, [req.user.id, `%${q}%`], (err, rows) => {
-  if (err) return res.status(500).json({ error: "Database error" });
-  res.json(rows);
+  const sql = `
+    SELECT id, amount, description
+    FROM transactions
+    WHERE user_id = ?
+      AND description LIKE ?
+    ORDER BY id DESC
+  `;
+
+  db.all(sql, [req.user.id, `%${q}%`], (err, rows) => {
+    if (err) return res.status(500).json({ error: "Database error" });
+    res.json(rows);
+  });
 });
 
-// ------------------------------------------------------------
-// Q2 — Stored XSS + SQLi in feedback insert
-// ------------------------------------------------------------
+// --- FEEDBACK ---
 app.post("/feedback", auth, sensitiveLimiter, csrfProtection, (req, res) => {
-  const comment = sanitizer.sanitize(req.body.comment); // sanitize input
+  const comment = sanitizer.sanitize(req.body.comment);
   const userId = req.user.id;
 
-  // Get the username of the current user
-  db.get(`SELECT username FROM users WHERE id = ?`, [userId], (err, row) => {
+  db.get("SELECT username FROM users WHERE id = ?", [userId], (err, row) => {
     if (err) return res.status(500).json({ error: "Database error" });
     if (!row) return res.status(404).json({ error: "User not found" });
 
     const username = row.username;
-
-    // Insert feedback securely using parameterized query
-    const insert = `INSERT INTO feedback (user, comment) VALUES (?, ?)`;
-    db.run(insert, [username, comment], (err) => {
+    db.run("INSERT INTO feedback (user, comment) VALUES (?, ?)", [username, comment], (err) => {
       if (err) return res.status(500).json({ error: "Failed to save feedback" });
       res.json({ success: true });
     });
@@ -163,27 +152,23 @@ app.post("/feedback", auth, sensitiveLimiter, csrfProtection, (req, res) => {
 
 app.get("/feedback", auth, sensitiveLimiter, (req, res) => {
   db.all("SELECT user, comment FROM feedback ORDER BY id DESC", (err, rows) => {
+    if (err) return res.status(500).json({ error: "Database error" });
     res.json(rows);
   });
 });
 
-// ------------------------------------------------------------
-// Q3 — CSRF + SQLi in email update
-// ------------------------------------------------------------
+// --- CHANGE EMAIL ---
 app.post("/change-email", auth, sensitiveLimiter, csrfProtection, (req, res) => {
   const newEmail = req.body.email;
-
   if (!newEmail.includes("@")) return res.status(400).json({ error: "Invalid email" });
 
-  const sql = `
-    UPDATE users SET email = '${newEmail}' WHERE id = ${req.user.id}
-  `;
-  db.run(sql, () => {
+  db.run("UPDATE users SET email = ? WHERE id = ?", [newEmail, req.user.id], (err) => {
+    if (err) return res.status(500).json({ error: "Database error" });
     res.json({ success: true, email: newEmail });
   });
 });
 
-// ------------------------------------------------------------
+// --- START SERVER ---
 app.listen(4000, () =>
   console.log("FastBank Version A backend running on http://localhost:4000")
 );
