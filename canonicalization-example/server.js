@@ -52,13 +52,20 @@ app.post(
 // Vulnerable route (demo)
 app.post('/read-no-validate', (req, res) => {
   const filename = req.body.filename || '';
-  const joined = path.join(BASE_DIR, filename); // intentionally vulnerable
-  if (!fs.existsSync(joined)) return res.status(404).json({ error: 'File not found', path: joined });
-  const content = fs.readFileSync(joined, 'utf8');
-  res.json({ path: joined, content });
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const resolved = path.resolve(BASE_DIR, filename);
+  if (!resolved.startsWith(BASE_DIR)) {
+    return res.status(400).json({ error: 'Path traversal detected' });
+  }
+  if (!fs.existsSync(resolved)) {
+    return res.status(404).json({ error: 'File not found', path: resolved });
+  }
+  const content = fs.readFileSync(resolved, 'utf8');
+  res.json({ path: resolved, content });
 });
 
-// Helper route for samples
 app.post('/setup-sample', (req, res) => {
   const samples = {
     'hello.txt': 'Hello from safe file!\n',
