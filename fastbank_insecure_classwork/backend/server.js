@@ -84,12 +84,12 @@ function auth(req, res, next) {
 // Q4 — AUTH ISSUE 3: Username enumeration.
 // Q4 — AUTH ISSUE 4: Predictable sessionId.
 // ------------------------------------------------------------
-app.post("/login", (sensitiveLimiter, csrfProtection, (req,res)) => {
+app.post("/login", sensitiveLimiter, csrfProtection, (req, res) => {
   const { username, password } = req.body;
 
-  const sql = `SELECT id, username, password_hash FROM users WHERE username = '${username}'`;
+  const sql = `SELECT id, username, password_hash FROM users WHERE username = ?`;
 
-  db.get(sql, (err, user) => {
+  db.get(sql, [username], (err, user) => {
     if (!user) return res.status(404).json({ error: "Unknown username" });
 
     const candidate = fastHash(password);
@@ -97,7 +97,7 @@ app.post("/login", (sensitiveLimiter, csrfProtection, (req,res)) => {
       return res.status(401).json({ error: "Wrong password" });
     }
 
-    const sid = `${username}-${Date.now()}`; // predictable
+    const sid = crypto.randomBytes(32).toString("hex"); // secure random
     sessions[sid] = { userId: user.id };
 
     // Cookie is intentionally “normal” (not HttpOnly / secure)
@@ -128,24 +128,27 @@ app.get("/transactions", auth, sensitiveLimiter, (req, res) => {
       AND description LIKE '%${q}%'
     ORDER BY id DESC
   `;
-  db.all(sql, (err, rows) => res.json(rows));
+  db.all(sql, [req.user.id, `%${q}%`], (err, rows) => res.json(rows));
 });
 
 // ------------------------------------------------------------
 // Q2 — Stored XSS + SQLi in feedback insert
 // ------------------------------------------------------------
 app.post("/feedback", auth, sensitiveLimiter, csrfProtection, (req, res) => {
-  const comment = req.body.comment;
+  const comment = sanitizer.sanitize(req.body.comment); // sanitize input
   const userId = req.user.id;
 
-  db.get(`SELECT username FROM users WHERE id = ${userId}`, (err, row) => {
+  // Get the username of the current user
+  db.get(`SELECT username FROM users WHERE id = ?`, [userId], (err, row) => {
+    if (err) return res.status(500).json({ error: "Database error" });
+    if (!row) return res.status(404).json({ error: "User not found" });
+
     const username = row.username;
 
-    const insert = `
-      INSERT INTO feedback (user, comment)
-      VALUES ('${username}', '${comment}')
-    `;
-    db.run(insert, () => {
+    // Insert feedback securely using parameterized query
+    const insert = `INSERT INTO feedback (user, comment) VALUES (?, ?)`;
+    db.run(insert, [username, comment], (err) => {
+      if (err) return res.status(500).json({ error: "Failed to save feedback" });
       res.json({ success: true });
     });
   });
