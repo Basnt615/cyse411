@@ -5,35 +5,35 @@ on:
     branches: [ main ]
   pull_request:
 
-  jobs:
-    semgrep:
-      runs-on: ubuntu-latest
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
 
-      permissions:
-        contents: read
-        security-events: write # allows uploading SARIF to Security tab
+    permissions:
+      contents: read
+      security-events: write # allows uploading SARIF to Security tab
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Install Semgrep
-      run: |
-        python -m pip install -- upgrade pip
-        pip install semgrep
-    - name: Run Semgrep SAST (OWASP Top 10 rules)
-      run: |
-        sengrep \
-          -- config p/owasp-top-ten \
-          -- error \
-          -- sarif -- output semgrep-results.sarif
+      - name: Install Semgrep
+        run: |
+          python -m pip install -- upgrade pip
+          pip install semgrep
+      - name: Run Semgrep SAST (OWASP Top 10 rules)
+        run: |
+          sengrep \
+            -- config p/owasp-top-ten \
+            -- error \
+            -- sarif -- output semgrep-results.sarif
 
-    - name: Upload SARIF to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: semgrep-results.sarif
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
