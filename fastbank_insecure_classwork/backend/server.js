@@ -4,8 +4,16 @@ const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const crypto = require("crypto");
-
+const rateLimit = require("express-rate-limit");  // for rate limiting
+const csurf = require("csurf");                   // for CSRF protection
+const sanitizer = require("some-html-sanitizer"); // for XSS input 
 const app = express();
+
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,                   // max 5 requests per IP per window
+  message: 'Too many requests. Please try again later.'
+});
 
 // --- BASIC CORS (clean, not vulnerable) ---
 app.use(
@@ -17,7 +25,7 @@ app.use(
 
 app.use(bodyParser.json());
 app.use(cookieParser());
-
+const csrfProtection = csurf({ cookie: true })
 // --- IN-MEMORY SQLITE DB (clean) ---
 const db = new sqlite3.Database(":memory:");
 
@@ -76,7 +84,7 @@ function auth(req, res, next) {
 // Q4 — AUTH ISSUE 3: Username enumeration.
 // Q4 — AUTH ISSUE 4: Predictable sessionId.
 // ------------------------------------------------------------
-app.post("/login", (req, res) => {
+app.post("/login", (sensitiveLimiter, csrfProtection, (req,res)) => {
   const { username, password } = req.body;
 
   const sql = `SELECT id, username, password_hash FROM users WHERE username = '${username}'`;
@@ -102,7 +110,7 @@ app.post("/login", (req, res) => {
 // ------------------------------------------------------------
 // /me — clean route, no vulnerabilities
 // ------------------------------------------------------------
-app.get("/me", auth, (req, res) => {
+app.get("/me", auth, sensitiveLimiter, (req, res) => {
   db.get(`SELECT username, email FROM users WHERE id = ${req.user.id}`, (err, row) => {
     res.json(row);
   });
@@ -111,7 +119,7 @@ app.get("/me", auth, (req, res) => {
 // ------------------------------------------------------------
 // Q1 — SQLi in transaction search
 // ------------------------------------------------------------
-app.get("/transactions", auth, (req, res) => {
+app.get("/transactions", auth, sensitiveLimiter, (req, res) => {
   const q = req.query.q || "";
   const sql = `
     SELECT id, amount, description
@@ -126,7 +134,7 @@ app.get("/transactions", auth, (req, res) => {
 // ------------------------------------------------------------
 // Q2 — Stored XSS + SQLi in feedback insert
 // ------------------------------------------------------------
-app.post("/feedback", auth, (req, res) => {
+app.post("/feedback", auth, sensitiveLimiter, csrfProtection, (req, res) => {
   const comment = req.body.comment;
   const userId = req.user.id;
 
@@ -143,7 +151,7 @@ app.post("/feedback", auth, (req, res) => {
   });
 });
 
-app.get("/feedback", auth, (req, res) => {
+app.get("/feedback", auth, sensitiveLimiter, (req, res) => {
   db.all("SELECT user, comment FROM feedback ORDER BY id DESC", (err, rows) => {
     res.json(rows);
   });
@@ -152,7 +160,7 @@ app.get("/feedback", auth, (req, res) => {
 // ------------------------------------------------------------
 // Q3 — CSRF + SQLi in email update
 // ------------------------------------------------------------
-app.post("/change-email", auth, (req, res) => {
+app.post("/change-email", auth, sensitiveLimiter, csrfProtection, (req, res) => {
   const newEmail = req.body.email;
 
   if (!newEmail.includes("@")) return res.status(400).json({ error: "Invalid email" });
