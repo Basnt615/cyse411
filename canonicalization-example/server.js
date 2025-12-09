@@ -1,10 +1,26 @@
 // server.js
+Import modules
+Import rate-limit
+Define app
+Define limiter (window + max requests)
+Attach limiter 
+Define routes
+Start server
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { body, validationResult } = require('express-validator');
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // max 100 requests per IP
+  message: 'Too many requests, please try again later.'
+});
 
 const app = express();
+app.use(limiter);
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
