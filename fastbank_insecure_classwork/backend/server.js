@@ -56,10 +56,12 @@ db.serialize(() => {
     );
   `);
 
-  const passwordHash = crypto.createHash("sha256").update("password123").digest("hex");
+  const passwordHash = fastHash("password123");
 
-  db.run(`INSERT INTO users (username, password_hash, email)
-          VALUES ('alice', '${passwordHash}', 'alice@example.com');`);
+  db.run(
+    "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
+    ["alice", passwordHash, "alice@example.com"]
+  );
 
   db.run(`INSERT INTO transactions (user_id, amount, description) VALUES (1, 25.50, 'Coffee shop')`);
   db.run(`INSERT INTO transactions (user_id, amount, description) VALUES (1, 100, 'Groceries')`);
@@ -111,9 +113,11 @@ app.post("/login", sensitiveLimiter, csrfProtection, (req, res) => {
 // /me — clean route, no vulnerabilities
 // ------------------------------------------------------------
 app.get("/me", auth, sensitiveLimiter, (req, res) => {
-  db.get(`SELECT username, email FROM users WHERE id = ${req.user.id}`, (err, row) => {
-    res.json(row);
-  });
+  db.get(
+  "SELECT username, email FROM users WHERE id = ?",
+  [req.user.id],
+  (err, row) => res.json(row)
+  );
 });
 
 // ------------------------------------------------------------
@@ -122,13 +126,16 @@ app.get("/me", auth, sensitiveLimiter, (req, res) => {
 app.get("/transactions", auth, sensitiveLimiter, (req, res) => {
   const q = req.query.q || "";
   const sql = `
-    SELECT id, amount, description
-    FROM transactions
-    WHERE user_id = ${req.user.id}
-      AND description LIKE '%${q}%'
-    ORDER BY id DESC
-  `;
-  db.all(sql, [req.user.id, `%${q}%`], (err, rows) => res.json(rows));
+  SELECT id, amount, description
+  FROM transactions
+  WHERE user_id = ?
+    AND description LIKE ?
+  ORDER BY id DESC
+`;
+
+db.all(sql, [req.user.id, `%${q}%`], (err, rows) => {
+  if (err) return res.status(500).json({ error: "Database error" });
+  res.json(rows);
 });
 
 // ------------------------------------------------------------
