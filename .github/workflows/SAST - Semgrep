@@ -2,8 +2,9 @@ name: SAST - Semgrep
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
   semgrep:
@@ -11,7 +12,7 @@ jobs:
 
     permissions:
       contents: read
-      security-events: write # allows uploading SARIF to Security tab
+      security-events: write  # allows uploading SARIF to Security tab
 
     steps:
       - name: Checkout repository
@@ -20,18 +21,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: "3.x"
 
       - name: Install Semgrep
         run: |
-          python -m pip install -- upgrade pip
+          python -m pip install --upgrade pip
           pip install semgrep
+
       - name: Run Semgrep SAST (OWASP Top 10 rules)
         run: |
-          sengrep \
-            -- config p/owasp-top-ten \
-            -- error \
-            -- sarif -- output semgrep-results.sarif
+          semgrep \
+            --config p/owasp-top-ten \
+            --error \
+            --sarif --output semgrep-results.sarif
 
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
