@@ -1,10 +1,14 @@
 name: Dast - OWASP ZAP Full Scan
 
+permissions:
+  content: read
+
 on:
-  workflow_dispatch:  # run manually from Actions tab
-  # You can also add:
-  # push:
-  #  branches: [ main ]
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    
 jobs:
   zap_scan:
     runs-on: ubuntu-latest
