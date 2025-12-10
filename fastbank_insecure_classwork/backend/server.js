@@ -9,6 +9,8 @@ const csurf = require("csurf");
 const sanitizer = require("some-html-sanitizer");
 const app = express();
 
+
+
 // --- RATE LIMITER ---
 const sensitiveLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -31,8 +33,13 @@ const csrfProtection = csurf({ cookie: true });
 // --- SQLITE IN-MEMORY DB ---
 const db = new sqlite3.Database(":memory:");
 
-function fastHash(pwd) {
-  return crypto.createHash("sha256").update(pwd).digest("hex");
+const bcrypt = require("bcrypt");
+
+function secureHash(password) {
+  return bcrypt.hashSync(password, 12); // 12 rounds recommended
+}
+function verifyPassword(password, hash) {
+  return bcrypt.compareSync(password, hash);
 }
 
 db.serialize(() => {
@@ -62,7 +69,7 @@ db.serialize(() => {
     )
   `);
 
-  const passwordHash = fastHash("password123");
+  const passwordHash = secureHash("password123");
 
   db.run(
     "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
@@ -96,9 +103,9 @@ app.post("/login", sensitiveLimiter, csrfProtection, (req, res) => {
   db.get("SELECT id, username, password_hash FROM users WHERE username = ?", [username], (err, user) => {
     if (!user) return res.status(404).json({ error: "Unknown username" });
 
-    const candidate = fastHash(password);
-    if (candidate !== user.password_hash) return res.status(401).json({ error: "Wrong password" });
-
+    if (!verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: "Wrong password" });
+  }
     const sid = crypto.randomBytes(32).toString("hex");
     sessions[sid] = { userId: user.id };
 
