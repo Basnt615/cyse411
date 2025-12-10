@@ -2,7 +2,7 @@ name: Dast - OWASP ZAP Full Scan
 
 permissions:
   contents: read
-
+ 
 on:
   push:
     branches: [ main ]
